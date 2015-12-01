@@ -30,9 +30,9 @@
   </licenses>
 
   <scm>
-    <url>https://github.com/federkasten/appbundle-maven-plugin.git</url>
-    <connection>scm:git:git@github.com:federkasten/appbundle-maven-plugin.git</connection>
-    <developerConnection>scm:git:git@github.com:federkasten/appbundle-maven-plugin.git</developerConnection>
+    <url>https://github.com/Hokua/appbundle-maven-plugin.git</url>
+    <connection>scm:git:git@github.com:Hokua/appbundle-maven-plugin.git</connection>
+    <developerConnection>scm:git:git@github.com:Hokua/appbundle-maven-plugin.git</developerConnection>
   </scm>
 
   <build>
