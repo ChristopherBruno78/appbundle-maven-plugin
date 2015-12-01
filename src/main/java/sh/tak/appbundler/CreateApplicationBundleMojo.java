@@ -367,7 +367,7 @@ public class CreateApplicationBundleMojo extends AbstractMojo {
         // 7. Copy specified additional resources into the top level directory
         getLog().info("Copying additional resources");
         if (additionalResources != null && !additionalResources.isEmpty()) {
-            this.copyResources(buildDirectory, additionalResources);
+            this.copyResources(resourcesDir, additionalResources);
         }
 
         // 7. Make the stub executable
