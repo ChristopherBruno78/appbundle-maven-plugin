@@ -16,18 +16,6 @@
  */
 package sh.tak.appbundler;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.FileReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import javax.xml.stream.XMLInputFactory;
 import org.apache.commons.lang.SystemUtils;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.repository.layout.ArtifactRepositoryLayout;
@@ -49,6 +37,12 @@ import org.codehaus.plexus.util.cli.CommandLineException;
 import org.codehaus.plexus.util.cli.Commandline;
 import org.codehaus.plexus.velocity.VelocityComponent;
 import sh.tak.appbundler.logging.MojoLogChute;
+
+import javax.xml.stream.XMLInputFactory;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Package dependencies as an Application Bundle for Mac OS X.
@@ -280,6 +274,7 @@ public class CreateApplicationBundleMojo extends AbstractMojo {
         File macOSDirectory = new File(contentsDir, "MacOS");
         macOSDirectory.mkdirs();
 
+        getLog().info("java launcher name: " + javaLauncherName);
         // 2. Copy in the native java application stub
         getLog().info("Copying the native Java Application Stub");
         File launcher = new File(macOSDirectory, javaLauncherName);
@@ -292,7 +287,188 @@ public class CreateApplicationBundleMojo extends AbstractMojo {
             throw new MojoExecutionException("Could not copy file to directory " + launcher, ex);
         }
 
-        InputStream launcherResourceStream = this.getClass().getResourceAsStream(javaLauncherName);
+        InputStream launcherResourceStream = this.getClass().getResourceAsStream("JavaAppLauncher");
+        try {
+            IOUtil.copy(launcherResourceStream, launcherStream);
+        } catch (IOException ex) {
+            throw new MojoExecutionException("Could not copy file " + javaLauncherName + " to directory " + macOSDirectory, ex);
+        }
+
+        // 3.Copy icon file to the bundle if specified
+        if (iconFile != null) {
+            File f = searchFile(iconFile);
+
+            if (f != null && f.exists() && f.isFile()) {
+                getLog().info("Copying the Icon File");
+                try {
+                    FileUtils.copyFileToDirectory(f, resourcesDir);
+                } catch (IOException ex) {
+                    throw new MojoExecutionException("Error copying file " + iconFile + " to " + resourcesDir, ex);
+                }
+            }
+        }
+
+        // 4. Resolve and copy in all dependencies from the pom
+        getLog().info("Copying dependencies");
+        List<String> files = copyDependencies(javaDirectory);
+        if (additionalBundledClasspathResources != null && !additionalBundledClasspathResources.isEmpty()) {
+            files.addAll(copyAdditionalBundledClasspathResources(javaDirectory, "lib", additionalBundledClasspathResources));
+        }
+
+        // 5. Check if JRE should be embedded. Check JRE path. Copy JRE
+        if (jrePath != null) {
+            getLog().info("Copying the JRE Folder " + jrePath);
+
+            File f = new File(jrePath);
+            if (f.exists() && f.isDirectory()) {
+                File pluginsDirectory = new File(contentsDir, "PlugIns/JRE");
+                pluginsDirectory.mkdirs();
+                try {
+                    FileUtils.copyDirectoryStructure(f, pluginsDirectory);
+                    File binFolder = new File(pluginsDirectory, "Contents/Home/bin");
+                    //Setting execute permissions on executables in JRE
+                    for (String filename : binFolder.list()) {
+                        new File(binFolder, filename).setExecutable(true, false);
+                    }
+                    // creating fake folder if a JRE is used
+                    File jdkDylibFolder = new File(pluginsDirectory, "Contents/Home/jre/lib/jli/libjli.dylib");
+                    if (!jdkDylibFolder.exists()) {
+                        getLog().info("Assuming that this is a JRE creating fake folder");
+                        File fakeJdkFolder = new File(pluginsDirectory, "Contents/Home/jre/lib");
+                        fakeJdkFolder.mkdirs();
+                        FileUtils.copyDirectoryStructure(new File(pluginsDirectory, "Contents/Home/lib"), fakeJdkFolder);
+
+                        fakeJdkFolder = new File(pluginsDirectory, "Contents/Home/jre/bin");
+                        fakeJdkFolder.mkdirs();
+                        FileUtils.copyDirectoryStructure(new File(pluginsDirectory, "Contents/Home/bin"), fakeJdkFolder);
+
+                        FileUtils.deleteDirectory(new File(pluginsDirectory, "Contents/Home/bin"));
+                        FileUtils.deleteDirectory(new File(pluginsDirectory, "Contents/Home/lib"));
+                    }
+                    embeddJre = true;
+                } catch (IOException ex) {
+                    throw new MojoExecutionException("Error copying folder " + f + " to " + pluginsDirectory, ex);
+                }
+            } else {
+                getLog().warn("JRE not found check jrePath setting in pom.xml");
+            }
+        }
+
+        // 6. Create and write the Info.plist file
+        getLog().info("Writing the Info.plist file");
+        File infoPlist = new File(bundleDir, "Contents" + File.separator + "Info.plist");
+        this.writeInfoPlist(infoPlist, files);
+
+        // 7. Copy specified additional resources into the top level directory
+        getLog().info("Copying additional resources");
+        if (additionalResources != null && !additionalResources.isEmpty()) {
+            this.copyResources(resourcesDir, additionalResources);
+        }
+
+        // 7. Make the stub executable
+        if (!SystemUtils.IS_OS_WINDOWS) {
+            getLog().info("Making stub executable");
+            Commandline chmod = new Commandline();
+            try {
+                chmod.setExecutable("chmod");
+                chmod.createArgument().setValue("755");
+                chmod.createArgument().setValue(launcher.getAbsolutePath());
+
+                chmod.execute();
+            } catch (CommandLineException e) {
+                throw new MojoExecutionException("Error executing " + chmod + " ", e);
+            }
+        } else {
+            getLog().warn("The stub was created without executable file permissions for UNIX systems");
+        }
+
+        // 8. Create the DMG file
+        if (generateDiskImageFile) {
+            if (SystemUtils.IS_OS_MAC_OSX) {
+                getLog().info("Generating the Disk Image file");
+                Commandline dmg = new Commandline();
+                try {
+                    dmg.setExecutable("hdiutil");
+                    dmg.createArgument().setValue("create");
+                    dmg.createArgument().setValue("-srcfolder");
+                    dmg.createArgument().setValue(buildDirectory.getAbsolutePath());
+                    dmg.createArgument().setValue(diskImageFile.getAbsolutePath());
+
+                    try {
+                        dmg.execute().waitFor();
+                    } catch (InterruptedException ex) {
+                        throw new MojoExecutionException("Thread was interrupted while creating DMG " + diskImageFile, ex);
+                    }
+                } catch (CommandLineException ex) {
+                    throw new MojoExecutionException("Error creating disk image " + diskImageFile, ex);
+                }
+
+                if (diskImageInternetEnable) {
+                    getLog().info("Enabling the Disk Image file for internet");
+                    try {
+                        Commandline internetEnableCommand = new Commandline();
+
+                        internetEnableCommand.setExecutable("hdiutil");
+                        internetEnableCommand.createArgument().setValue("internet-enable");
+                        internetEnableCommand.createArgument().setValue("-yes");
+                        internetEnableCommand.createArgument().setValue(diskImageFile.getAbsolutePath());
+
+                        internetEnableCommand.execute();
+                    } catch (CommandLineException ex) {
+                        throw new MojoExecutionException("Error internet enabling disk image: " + diskImageFile, ex);
+                    }
+                }
+                projectHelper.attachArtifact(project, "dmg", null, diskImageFile);
+            } else {
+                getLog().warn("Disk Image file cannot be generated in non Mac OS X environments");
+            }
+        }
+
+        getLog().info("App Bundle generation finished");
+    }
+
+
+    /**
+     * Bundle project as a Mac OS X application bundle.
+     *
+     * @throws MojoExecutionException If an unexpected error occurs during
+     * packaging of the bundle.
+     */
+    public void execute() throws MojoExecutionException {
+
+        // 1. Create and set up directories
+        getLog().info("Creating and setting up the bundle directories");
+        buildDirectory.mkdirs();
+
+        File bundleDir = new File(buildDirectory, bundleName + ".app");
+        bundleDir.mkdirs();
+
+        File contentsDir = new File(bundleDir, "Contents");
+        contentsDir.mkdirs();
+
+        File resourcesDir = new File(contentsDir, "Resources");
+        resourcesDir.mkdirs();
+
+        File javaDirectory = new File(contentsDir, "Java");
+        javaDirectory.mkdirs();
+
+        File macOSDirectory = new File(contentsDir, "MacOS");
+        macOSDirectory.mkdirs();
+
+        getLog().info("java launcher name: " + javaLauncherName);
+        // 2. Copy in the native java application stub
+        getLog().info("Copying the native Java Application Stub");
+        File launcher = new File(macOSDirectory, javaLauncherName);
+        launcher.setExecutable(true);
+
+        FileOutputStream launcherStream = null;
+        try {
+            launcherStream = new FileOutputStream(launcher);
+        } catch (FileNotFoundException ex) {
+            throw new MojoExecutionException("Could not copy file to directory " + launcher, ex);
+        }
+
+        InputStream launcherResourceStream = this.getClass().getResourceAsStream("JavaAppLauncher");
         try {
             IOUtil.copy(launcherResourceStream, launcherStream);
         } catch (IOException ex) {
@@ -467,7 +643,7 @@ public class CreateApplicationBundleMojo extends AbstractMojo {
 
         for (Artifact artifact : project.getArtifacts()) {
             File file = artifact.getFile();
-            File dest = new File(javaDirectory, layout.pathOf(artifact));
+            File dest = new File(javaDirectory, "/lib/" + file.getName());
 
             getLog().debug("Adding " + file);
 
@@ -519,11 +695,18 @@ public class CreateApplicationBundleMojo extends AbstractMojo {
         return newFilenames;
     }
 
+    private static String detectEncoding(File file) throws Exception {
+        return XMLInputFactory
+                .newInstance()
+                .createXMLStreamReader(new FileReader(file))
+                .getCharacterEncodingScheme();
+    }
+
     /**
      * Writes an Info.plist file describing this bundle.
      *
      * @param infoPlist The file to write Info.plist contents to
-     * @param files A list of file names of the jar files to add in $JAVAROOT
+     * @param files     A list of file names of the jar files to add in $JAVAROOT
      * @throws MojoExecutionException
      */
     private void writeInfoPlist(File infoPlist, List<String> files) throws MojoExecutionException {
@@ -622,13 +805,6 @@ public class CreateApplicationBundleMojo extends AbstractMojo {
         } catch (Exception ex) {
             throw new MojoExecutionException("Exception occured merging Info.plist template " + dictionaryFile, ex);
         }
-    }
-
-    private static String detectEncoding(File file) throws Exception {
-        return XMLInputFactory
-                .newInstance()
-                .createXMLStreamReader(new FileReader(file))
-                .getCharacterEncodingScheme();
     }
 
     /**
