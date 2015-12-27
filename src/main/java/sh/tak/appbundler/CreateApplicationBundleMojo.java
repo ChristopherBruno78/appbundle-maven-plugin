@@ -485,7 +485,7 @@ public class CreateApplicationBundleMojo extends AbstractMojo {
 
         for (Artifact artifact : project.getArtifacts()) {
             File file = artifact.getFile();
-            File dest = new File(javaDirectory, "/lib/" + file.getName());
+            File dest = new File(javaDirectory, layout.pathOf(artifact));
 
             getLog().debug("Adding " + file);
 
