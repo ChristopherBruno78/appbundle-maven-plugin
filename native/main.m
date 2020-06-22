@@ -103,12 +103,12 @@ int launch(char *commandName) {
     chdir([workingDirectory UTF8String]);
 
     // Locate the JLI_Launch() function
-    NSString *runtime = [infoDictionary objectForKey:@JVM_RUNTIME_KEY];
+    NSString *runtime = [NSString stringWithFormat:@"Contents/Runtime/%@", [infoDictionary objectForKey:@JVM_RUNTIME_KEY]];
 
     const char *libjliPath = NULL;
     if (runtime != nil && [runtime length] > 0) {
-        NSString *runtimePath = [[[NSBundle mainBundle] builtInPlugInsPath] stringByAppendingPathComponent:runtime];
-        libjliPath = [[runtimePath stringByAppendingPathComponent:@"Contents/Home/jre/lib/jli/libjli.dylib"] fileSystemRepresentation];
+        NSString *runtimePath = [[[NSBundle mainBundle] bundlePath] stringByAppendingPathComponent:runtime];
+        libjliPath = [[runtimePath stringByAppendingPathComponent:@"Contents/Home/jre/lib/libjli.dylib"] fileSystemRepresentation];
     } else {
         libjliPath = LIBJLI_DYLIB;
     }

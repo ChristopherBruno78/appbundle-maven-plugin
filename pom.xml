@@ -2,7 +2,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.hokuasoftware.appbundler</groupId>
+  <groupId>com.edusoftwerks.appbundler</groupId>
   <artifactId>appbundle-maven-plugin</artifactId>
   <packaging>maven-plugin</packaging>
   <version>1.0.5-SNAPSHOT</version>
@@ -60,7 +60,7 @@
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.2</version>
         <configuration>
-          <target>1.6</target>
+          <target>1.8</target>
         </configuration>
       </plugin>
     </plugins>
